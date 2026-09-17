@@ -1,26 +1,10 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
-const nodemailer = require('nodemailer');
-const { User, Otp, Conversation, Message } = require('./models');
+const crypto = require('crypto');
+const { User, Conversation, Message } = require('./models');
 const { authenticateToken, JWT_SECRET } = require('./middleware');
 
 const router = express.Router();
-const smtpUser = process.env.SMTP_USER;
-const smtpPassword = process.env.SMTP_APP_PASSWORD;
-const emailTransporter = smtpUser && smtpPassword
-  ? nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 587,
-      secure: false,
-      requireTLS: true,
-      family: 4,
-      auth: {
-        user: smtpUser,
-        pass: smtpPassword
-      }
-    })
-  : null;
-const emailFrom = process.env.EMAIL_FROM || smtpUser;
 
 // Helper to normalize phone numbers
 function cleanPhone(phone) {
@@ -33,11 +17,43 @@ function cleanEmail(email) {
   return email.trim().toLowerCase();
 }
 
-// 1. Request OTP by email
-router.post('/auth/request-otp', async (req, res) => {
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password, storedHash) {
+  const [salt, hash] = (storedHash || '').split(':');
+  if (!salt || !hash) return false;
+  const derivedHash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(derivedHash, 'hex'));
+}
+
+function createToken(user) {
+  return jwt.sign(
+    { userId: user._id, phone: user.phone, email: user.email },
+    JWT_SECRET,
+    { expiresIn: '7d' }
+  );
+}
+
+function publicUser(user) {
+  return {
+    id: user._id,
+    email: user.email,
+    phone: user.phone,
+    name: user.name || user.phone
+  };
+}
+
+// Password registration
+router.post('/auth/register', async (req, res) => {
   try {
     const email = cleanEmail(req.body.email);
     const phone = cleanPhone(req.body.phone);
+    const password = req.body.password ? req.body.password.toString() : '';
+    const name = req.body.name ? req.body.name.toString().trim() : '';
 
     if (!email || !email.includes('@')) {
       return res.status(400).json({ success: false, message: 'Please provide a valid email address.' });
@@ -46,104 +62,51 @@ router.post('/auth/request-otp', async (req, res) => {
     if (!phone || phone.length < 4) {
       return res.status(400).json({ success: false, message: 'Please provide a valid phone number.' });
     }
-
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
-
-    await Otp.deleteMany({ email });
-    await Otp.create({
-      email,
-      phone,
-      code,
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000)
-    });
-
-    console.log(`\n========================================`);
-    console.log(`📧 [Dialo OTP Generated] Email: ${email} | Phone: ${phone} | OTP: ${code}`);
-    console.log(`========================================\n`);
-
-    if (emailTransporter && emailFrom) {
-      try {
-        const emailResponse = await emailTransporter.sendMail({
-          from: emailFrom,
-          to: email,
-          subject: 'Your Dialo verification code',
-          html: `
-            <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111827;">
-              <h2 style="margin-bottom: 12px;">Your verification code</h2>
-              <p>Use the code below to verify your email and continue with Dialo.</p>
-              <div style="margin: 20px 0; padding: 18px 20px; background: #f3f4f6; border-radius: 10px; font-size: 28px; letter-spacing: 6px; font-weight: bold; text-align: center;">
-                ${code}
-              </div>
-              <p>This code expires in 10 minutes.</p>
-            </div>
-          `
-        });
-
-        console.log('[Gmail SMTP] OTP email sent:', emailResponse.messageId);
-      } catch (emailError) {
-        await Otp.deleteMany({ email });
-        console.error('[Gmail SMTP Error]', emailError);
-        return res.status(502).json({
-          success: false,
-          message: 'Unable to send the verification email. Check the Gmail SMTP configuration.'
-        });
-      }
-    } else {
-      await Otp.deleteMany({ email });
-      console.error('[Email Configuration Error] SMTP_USER and SMTP_APP_PASSWORD are required.');
-      return res.status(503).json({
-        success: false,
-        message: 'Email service is not configured.'
-      });
+    if (password.length < 8) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 8 characters.' });
     }
 
-    res.json({
-      success: true,
-      message: 'OTP sent to your email address.',
-      email,
-      phone
-    });
+    const existingEmail = await User.findOne({ email });
+    const existingPhone = await User.findOne({ phone });
+    if (existingEmail || existingPhone) {
+      return res.status(409).json({ success: false, message: 'An account with that email or phone already exists.' });
+    }
+
+    const user = await User.create({ email, phone, name, passwordHash: hashPassword(password) });
+    res.status(201).json({ success: true, token: createToken(user), user: publicUser(user) });
   } catch (error) {
-    console.error('Error requesting OTP:', error);
-    res.status(500).json({ success: false, message: 'Failed to generate OTP.' });
+    console.error('Error registering user:', error);
+    const message = error?.code === 11000 ? 'That email or phone number is already registered.' : 'Failed to create account.';
+    res.status(500).json({ success: false, message });
   }
 });
 
-// 2. Verify OTP & Issue JWT
-router.post('/auth/verify-otp', async (req, res) => {
+// Password login
+router.post('/auth/login', async (req, res) => {
   try {
     const email = cleanEmail(req.body.email);
-    const phone = cleanPhone(req.body.phone);
-    const code = req.body.code ? req.body.code.toString().trim() : '';
-    const name = req.body.name ? req.body.name.toString().trim() : '';
+    const password = req.body.password ? req.body.password.toString() : '';
 
-    if (!email || !phone || !code) {
-      return res.status(400).json({ success: false, message: 'Email, phone number, and OTP code are required.' });
+    if (!email || !password) {
+      return res.status(400).json({ success: false, message: 'Email and password are required.' });
     }
 
-    const validOtp = await Otp.findOne({
-      email,
-      phone,
-      code,
-      expiresAt: { $gt: new Date() }
-    });
-
-    if (!validOtp) {
-      return res.status(400).json({ success: false, message: 'Invalid or expired OTP code.' });
+    const user = await User.findOne({ email });
+    if (!user || !verifyPassword(password, user.passwordHash)) {
+      return res.status(401).json({ success: false, message: 'Invalid email or password.' });
     }
 
-    const emailUser = await User.findOne({ email });
-    const phoneUser = await User.findOne({ phone });
+    res.json({ success: true, token: createToken(user), user: publicUser(user) });
+  } catch (error) {
+    console.error('Error logging in:', error);
+    res.status(500).json({ success: false, message: 'Failed to log in.' });
+  }
+});
 
-    if (emailUser && phoneUser && emailUser._id.toString() !== phoneUser._id.toString()) {
-      return res.status(409).json({
-        success: false,
-        message: 'This email and phone number belong to different accounts. Use the matching email and phone number.'
-      });
-    }
-
+/* Legacy OTP verification kept disabled until password migration is complete.
+   Existing OTP-created users without a password can no longer log in here. */
+/*
     let user = emailUser || phoneUser;
-
     if (!user) {
       user = await User.create({
         email,
@@ -185,6 +148,7 @@ router.post('/auth/verify-otp', async (req, res) => {
     res.status(500).json({ success: false, message });
   }
 });
+*/
 
 // 3. Get Current User info
 router.get('/auth/me', authenticateToken, async (req, res) => {

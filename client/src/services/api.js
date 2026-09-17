@@ -6,22 +6,22 @@ function getAuthHeader() {
 }
 
 export const api = {
-  // Request OTP by email
-  async requestOtp(email, phone) {
-    const res = await fetch(`${BASE_URL}/api/auth/request-otp`, {
+  // Register with a password
+  async register(email, phone, name, password) {
+    const res = await fetch(`${BASE_URL}/api/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, phone })
+      body: JSON.stringify({ email, phone, name, password })
     });
     return res.json();
   },
 
-  // Verify OTP and get JWT + user
-  async verifyOtp(email, phone, code, name) {
-    const res = await fetch(`${BASE_URL}/api/auth/verify-otp`, {
+  // Log in with a password
+  async login(email, password) {
+    const res = await fetch(`${BASE_URL}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, phone, code, name })
+      body: JSON.stringify({ email, password })
     });
     return res.json();
   },

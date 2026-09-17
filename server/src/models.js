@@ -22,6 +22,10 @@ const userSchema = new mongoose.Schema({
     trim: true,
     default: ''
   },
+  passwordHash: {
+    type: String,
+    default: ''
+  },
   createdAt: {
     type: Date,
     default: Date.now

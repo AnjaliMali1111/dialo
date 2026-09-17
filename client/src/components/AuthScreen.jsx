@@ -1,17 +1,18 @@
 import React, { useState } from 'react';
 import { api } from '../services/api';
-import { Phone, ShieldCheck, ArrowRight, User as UserIcon, Sparkles } from 'lucide-react';
+import { Phone, LockKeyhole, ArrowRight, User as UserIcon, Sparkles } from 'lucide-react';
 
 export default function AuthScreen({ onAuthenticated }) {
-  const [step, setStep] = useState(1); // 1: Email + Phone & Name, 2: OTP
+  const [mode, setMode] = useState('register');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [name, setName] = useState('');
-  const [otp, setOtp] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const handleRequestOtp = async (e) => {
+  const handleSubmit = async (e) => {
     e?.preventDefault();
 
     const cleanEmail = email.trim();
@@ -22,32 +23,18 @@ export default function AuthScreen({ onAuthenticated }) {
       return;
     }
 
-    if (!cleanPhone || cleanPhone.length < 4) {
+    if (mode === 'register' && (!cleanPhone || cleanPhone.length < 4)) {
       setError('Please enter a valid phone number.');
       return;
     }
 
-    setError('');
-    setLoading(true);
-
-    try {
-      const res = await api.requestOtp(cleanEmail, cleanPhone);
-      if (res.success) {
-        setStep(2);
-      } else {
-        setError(res.message || 'Failed to send OTP.');
-      }
-    } catch (err) {
-      setError('Could not reach the server. Make sure the backend is running.');
-    } finally {
-      setLoading(false);
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters.');
+      return;
     }
-  };
 
-  const handleVerifyOtp = async (e) => {
-    e?.preventDefault();
-    if (!otp || otp.trim().length === 0) {
-      setError('Please enter the 6-digit verification code.');
+    if (mode === 'register' && password !== confirmPassword) {
+      setError('Passwords do not match.');
       return;
     }
 
@@ -55,16 +42,18 @@ export default function AuthScreen({ onAuthenticated }) {
     setLoading(true);
 
     try {
-      const res = await api.verifyOtp(email.trim(), phone.trim(), otp.trim(), name.trim());
+      const res = mode === 'register'
+        ? await api.register(cleanEmail, cleanPhone, name.trim(), password)
+        : await api.login(cleanEmail, password);
       if (res.success) {
         localStorage.setItem('dialo_token', res.token);
         localStorage.setItem('dialo_user', JSON.stringify(res.user));
         onAuthenticated(res.user);
       } else {
-        setError(res.message || 'Invalid verification code.');
+        setError(res.message || (mode === 'register' ? 'Registration failed.' : 'Login failed.'));
       }
     } catch (err) {
-      setError('Verification failed. Please try again.');
+      setError('Could not reach the server. Make sure the backend is running.');
     } finally {
       setLoading(false);
     }
@@ -92,9 +81,8 @@ export default function AuthScreen({ onAuthenticated }) {
           </div>
         )}
 
-        {step === 1 ? (
-          <form onSubmit={handleRequestOtp} className="space-y-4">
-            <div>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {mode === 'register' && <div>
               <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
                 Email Address
               </label>
@@ -106,6 +94,42 @@ export default function AuthScreen({ onAuthenticated }) {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full bg-slate-800/80 border border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors"
+                  required
+                />
+              </div>
+            </div>}
+
+            {mode === 'register' && <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                Password
+              </label>
+              <div className="relative">
+                <LockKeyhole className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                <input
+                  type="password"
+                  placeholder="At least 8 characters"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full bg-slate-800/80 border border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors"
+                  minLength={8}
+                  required
+                />
+              </div>
+            </div>}
+
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                Confirm Password
+              </label>
+              <div className="relative">
+                <LockKeyhole className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                <input
+                  type="password"
+                  placeholder="Repeat your password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="w-full bg-slate-800/80 border border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors"
+                  minLength={8}
                   required
                 />
               </div>
@@ -149,56 +173,20 @@ export default function AuthScreen({ onAuthenticated }) {
               disabled={loading}
               className="w-full mt-2 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-medium py-2.5 px-4 rounded-xl text-sm transition-all shadow-md shadow-indigo-600/20 flex items-center justify-center space-x-2 disabled:opacity-50"
             >
-              <span>{loading ? 'Sending OTP...' : 'Continue'}</span>
+              <span>{loading ? (mode === 'register' ? 'Creating account...' : 'Logging in...') : (mode === 'register' ? 'Create account' : 'Log in')}</span>
               <ArrowRight className="w-4 h-4" />
             </button>
 
           </form>
-        ) : (
-          <form onSubmit={handleVerifyOtp} className="space-y-4">
-            <div className="p-3 bg-indigo-950/40 border border-indigo-800/50 rounded-xl text-center">
-              <p className="text-xs text-indigo-300">
-                OTP sent to <span className="font-semibold text-white">{email}</span>
-              </p>
-            </div>
 
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                Enter Verification Code
-              </label>
-              <div className="relative">
-                <ShieldCheck className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                <input
-                  type="text"
-                  maxLength={6}
-                  placeholder="6-digit OTP"
-                  value={otp}
-                  onChange={(e) => setOtp(e.target.value)}
-                  className="w-full bg-slate-800/80 border border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-base tracking-widest font-mono text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-center transition-colors"
-                  autoFocus
-                  required
-                />
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-medium py-2.5 px-4 rounded-xl text-sm transition-all shadow-md shadow-indigo-600/20 flex items-center justify-center space-x-2 disabled:opacity-50"
-            >
-              <span>{loading ? 'Verifying...' : 'Verify & Log In'}</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
-
-            <button
-              type="button"
-              onClick={() => { setStep(1); setError(''); }}
-              className="w-full text-center text-xs text-slate-400 hover:text-slate-300 transition-colors py-1"
-            >
-              ← Change phone number
-            </button>
-          </form>
-        )}
+          <button
+            type="button"
+            onClick={() => { setMode(mode === 'register' ? 'login' : 'register'); setError(''); }}
+            className="w-full mt-4 text-center text-xs text-slate-400 hover:text-slate-300 transition-colors py-1"
+          >
+            {mode === 'register' ? 'Already have an account? Log in' : 'Need an account? Register'}
+          </button>
+        
       </div>
     </div>
   );
