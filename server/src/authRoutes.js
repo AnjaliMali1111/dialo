@@ -10,8 +10,9 @@ const smtpPassword = process.env.SMTP_APP_PASSWORD;
 const emailTransporter = smtpUser && smtpPassword
   ? nodemailer.createTransport({
       host: 'smtp.gmail.com',
-      port: 465,
-      secure: true,
+      port: 587,
+      secure: false,
+      requireTLS: true,
       auth: {
         user: smtpUser,
         pass: smtpPassword
