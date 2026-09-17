@@ -17,6 +17,10 @@ function cleanEmail(email) {
   return email.trim().toLowerCase();
 }
 
+function internalEmailForPhone(phone) {
+  return `user-${phone.replace(/\D/g, '')}@dialo.local`;
+}
+
 function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString('hex');
   const hash = crypto.scryptSync(password, salt, 64).toString('hex');
@@ -50,14 +54,9 @@ function publicUser(user) {
 // Password registration
 router.post('/auth/register', async (req, res) => {
   try {
-    const email = cleanEmail(req.body.email);
     const phone = cleanPhone(req.body.phone);
     const password = req.body.password ? req.body.password.toString() : '';
     const name = req.body.name ? req.body.name.toString().trim() : '';
-
-    if (!email || !email.includes('@')) {
-      return res.status(400).json({ success: false, message: 'Please provide a valid email address.' });
-    }
 
     if (!phone || phone.length < 4) {
       return res.status(400).json({ success: false, message: 'Please provide a valid phone number.' });
@@ -66,13 +65,17 @@ router.post('/auth/register', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Password must be at least 8 characters.' });
     }
 
-    const existingEmail = await User.findOne({ email });
     const existingPhone = await User.findOne({ phone });
-    if (existingEmail || existingPhone) {
-      return res.status(409).json({ success: false, message: 'An account with that email or phone already exists.' });
+    if (existingPhone) {
+      return res.status(409).json({ success: false, message: 'An account with that phone number already exists.' });
     }
 
-    const user = await User.create({ email, phone, name, passwordHash: hashPassword(password) });
+    const user = await User.create({
+      email: internalEmailForPhone(phone),
+      phone,
+      name,
+      passwordHash: hashPassword(password)
+    });
     res.status(201).json({ success: true, token: createToken(user), user: publicUser(user) });
   } catch (error) {
     console.error('Error registering user:', error);
@@ -84,14 +87,14 @@ router.post('/auth/register', async (req, res) => {
 // Password login
 router.post('/auth/login', async (req, res) => {
   try {
-    const email = cleanEmail(req.body.email);
+    const phone = cleanPhone(req.body.phone);
     const password = req.body.password ? req.body.password.toString() : '';
 
-    if (!email || !password) {
-      return res.status(400).json({ success: false, message: 'Email and password are required.' });
+    if (!phone || !password) {
+      return res.status(400).json({ success: false, message: 'Phone number and password are required.' });
     }
 
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ phone });
     if (!user || !verifyPassword(password, user.passwordHash)) {
       return res.status(401).json({ success: false, message: 'Invalid email or password.' });
     }

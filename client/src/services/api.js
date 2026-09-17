@@ -7,21 +7,21 @@ function getAuthHeader() {
 
 export const api = {
   // Register with a password
-  async register(email, phone, name, password) {
+  async register(phone, name, password) {
     const res = await fetch(`${BASE_URL}/api/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, phone, name, password })
+      body: JSON.stringify({ phone, name, password })
     });
     return res.json();
   },
 
   // Log in with a password
-  async login(email, password) {
+  async login(phone, password) {
     const res = await fetch(`${BASE_URL}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ phone, password })
     });
     return res.json();
   },

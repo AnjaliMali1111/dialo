@@ -4,7 +4,6 @@ import { Phone, LockKeyhole, ArrowRight, User as UserIcon, Sparkles } from 'luci
 
 export default function AuthScreen({ onAuthenticated }) {
   const [mode, setMode] = useState('register');
-  const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
@@ -15,15 +14,9 @@ export default function AuthScreen({ onAuthenticated }) {
   const handleSubmit = async (e) => {
     e?.preventDefault();
 
-    const cleanEmail = email.trim();
     const cleanPhone = phone.trim();
 
-    if (!cleanEmail || !cleanEmail.includes('@')) {
-      setError('Please enter a valid email address.');
-      return;
-    }
-
-    if (mode === 'register' && (!cleanPhone || cleanPhone.length < 4)) {
+    if (!cleanPhone || cleanPhone.length < 4) {
       setError('Please enter a valid phone number.');
       return;
     }
@@ -43,8 +36,8 @@ export default function AuthScreen({ onAuthenticated }) {
 
     try {
       const res = mode === 'register'
-        ? await api.register(cleanEmail, cleanPhone, name.trim(), password)
-        : await api.login(cleanEmail, password);
+        ? await api.register(cleanPhone, name.trim(), password)
+        : await api.login(cleanPhone, password);
       if (res.success) {
         localStorage.setItem('dialo_token', res.token);
         localStorage.setItem('dialo_user', JSON.stringify(res.user));
@@ -82,24 +75,7 @@ export default function AuthScreen({ onAuthenticated }) {
         )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {mode === 'register' && <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                Email Address
-              </label>
-              <div className="relative">
-                <Sparkles className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                <input
-                  type="email"
-                  placeholder="you@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full bg-slate-800/80 border border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors"
-                  required
-                />
-              </div>
-            </div>}
-
-            {mode === 'register' && <div>
+            <div>
               <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
                 Password
               </label>
@@ -115,9 +91,9 @@ export default function AuthScreen({ onAuthenticated }) {
                   required
                 />
               </div>
-            </div>}
+            </div>
 
-            <div>
+            {mode === 'register' && <div>
               <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
                 Confirm Password
               </label>
@@ -133,7 +109,7 @@ export default function AuthScreen({ onAuthenticated }) {
                   required
                 />
               </div>
-            </div>
+            </div>}
 
             <div>
               <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
