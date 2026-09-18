@@ -279,8 +279,9 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
           </div>
         ) : (
           <>
-            <div className={`mt-6 grid min-h-[280px] flex-1 gap-3 ${isVideo ? 'grid-cols-1 sm:grid-cols-2' : ''}`}>
+            <div className={`mt-6 grid min-h-[280px] flex-1 gap-3 ${isVideo ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 sm:grid-cols-3'}`}>
               {isVideo && localStream && <MediaTile stream={localStream} isVideo muted local label={`${currentUser.name || 'You'} (You)`} />}
+              {!isVideo && localStream && <MediaTile stream={localStream} isVideo={false} muted label={`${currentUser.name || 'You'} (You)`} />}
               {participants.map(participant => <MediaTile key={participant.phone} stream={participant.stream} isVideo={isVideo} label={participant.name} />)}
               {mode !== 'connected' && <div className="flex items-center justify-center rounded-2xl border border-dashed border-slate-700 text-sm text-slate-400">Waiting for answer...</div>}
             </div>
