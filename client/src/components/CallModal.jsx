@@ -23,6 +23,7 @@ const ICE_SERVERS = {
     }
   ]
 };
+const MAX_CALL_PARTICIPANTS = 4;
 
 function MediaTile({ stream, isVideo, muted, label, local = false }) {
   const mediaRef = useRef(null);
@@ -604,6 +605,11 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
   const inviteParticipant = async (event) => {
     event.preventDefault();
     const phone = invitePhone.trim();
+    const participantCount = pcsRef.current.size + 1;
+    if (participantCount >= MAX_CALL_PARTICIPANTS) {
+      setInviteMessage('This call already has four participants.');
+      return;
+    }
     if (!phone || phone === currentUser.phone || pcsRef.current.has(phone)) return;
     try {
       await getLocalMedia();

@@ -59,6 +59,7 @@ const io = new Server(server, {
 const socketToPhone = new Map();
 const callRoomMembers = new Map(); // roomId -> Set of phones in call
 const phoneToCallRoom = new Map(); // phone -> roomId
+const MAX_CALL_PARTICIPANTS = 4;
 
 const addCallRoomMember = (roomId, phone) => {
   if (!roomId || !phone) return [];
@@ -198,6 +199,16 @@ io.on('connection', (socket) => {
     const existingTargetRoom = phoneToCallRoom.get(cleanToPhone);
     const existingCallerRoom = phoneToCallRoom.get(cleanFromPhone);
     const activeRoomId = existingCallerRoom || roomId || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString());
+
+    const activeMembers = callRoomMembers.get(activeRoomId) || new Set();
+    if (activeMembers.size >= MAX_CALL_PARTICIPANTS && !activeMembers.has(cleanToPhone)) {
+      socket.emit('call-failed', {
+        reason: 'full',
+        toPhone: cleanToPhone,
+        message: 'This call already has four participants.'
+      });
+      return;
+    }
 
     if (existingTargetRoom && existingTargetRoom !== activeRoomId) {
       socket.emit('call-failed', {
