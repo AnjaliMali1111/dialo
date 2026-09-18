@@ -19,7 +19,20 @@ function MediaTile({ stream, isVideo, muted, label, local = false }) {
     }
   }, [stream]);
 
-  if (!isVideo) return <audio ref={mediaRef} autoPlay playsInline muted={muted} />;
+  if (!isVideo) {
+    return (
+      <div className="flex min-h-32 items-center gap-4 rounded-2xl border border-slate-700 bg-slate-950 p-5">
+        <audio ref={mediaRef} autoPlay playsInline muted={muted} />
+        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-xl font-bold">
+          {label.charAt(0).toUpperCase()}
+        </div>
+        <div>
+          <p className="font-semibold text-white">{label}</p>
+          <p className="text-xs text-emerald-400">Voice connected</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative min-h-0 overflow-hidden rounded-2xl border border-slate-700 bg-slate-950">
@@ -57,7 +70,7 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
     };
     pc.ontrack = event => {
       if (event.streams[0]) {
-        setRemoteStreams(prev => ({ ...prev, [phone]: { phone, name: phone, stream: event.streams[0] } }));
+        setRemoteStreams(prev => ({ ...prev, [phone]: { ...(prev[phone] || {}), phone, name: prev[phone]?.name || phone, stream: event.streams[0] } }));
       }
     };
     pc.onconnectionstatechange = () => {
@@ -76,6 +89,7 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
         .then(offer => pc.setLocalDescription(offer))
         .then(() => socket.emit('call-user', {
           toPhone: phone,
+          fromName: currentUser.name || currentUser.phone,
           offer: pc.localDescription,
           callType: callState.callType,
           roomId: roomIdRef.current
@@ -103,7 +117,7 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
       candidatesRef.current.delete(callState.peerPhone);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
-      socket.emit('answer-call', { toPhone: callState.peerPhone, answer: pc.localDescription, roomId: roomIdRef.current });
+      socket.emit('answer-call', { toPhone: callState.peerPhone, answer: pc.localDescription, roomId: roomIdRef.current, fromName: currentUser.name || currentUser.phone });
       setMode('connected');
     } catch (error) {
       console.error('[Dialo] Could not accept call', error);
@@ -113,16 +127,21 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
 
   useEffect(() => {
     let timer;
-    const onAccepted = async ({ fromPhone, answer }) => {
+    const onAccepted = async ({ fromPhone, participantName, answer }) => {
       const pc = pcsRef.current.get(fromPhone);
       if (!pc) return;
       await pc.setRemoteDescription(new RTCSessionDescription(answer));
+      setRemoteStreams(prev => ({
+        ...prev,
+        [fromPhone]: { ...(prev[fromPhone] || {}), phone: fromPhone, name: participantName || prev[fromPhone]?.name || fromPhone }
+      }));
       setMode('connected');
     };
-    const onIncomingPeerOffer = async ({ fromPhone, offer, roomId }) => {
+    const onIncomingPeerOffer = async ({ fromPhone, callerName, offer, roomId }) => {
       if (mode === 'incoming_ringing' || roomId !== roomIdRef.current || fromPhone === currentUser.phone) return;
       try {
         await getLocalMedia();
+        setRemoteStreams(prev => ({ ...prev, [fromPhone]: { ...(prev[fromPhone] || {}), phone: fromPhone, name: callerName || fromPhone } }));
         const pc = createPeer(fromPhone);
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
         const queued = candidatesRef.current.get(fromPhone) || [];
@@ -130,14 +149,15 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
         candidatesRef.current.delete(fromPhone);
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        socket.emit('answer-call', { toPhone: fromPhone, answer: pc.localDescription, roomId: roomIdRef.current });
+        socket.emit('answer-call', { toPhone: fromPhone, answer: pc.localDescription, roomId: roomIdRef.current, fromName: currentUser.name || currentUser.phone });
         setMode('connected');
       } catch (error) {
         console.error('[Dialo] Could not join peer connection', error);
       }
     };
-    const onParticipantJoined = ({ phone, roomId, roomMembers }) => {
+    const onParticipantJoined = ({ phone, participantName, roomId, roomMembers }) => {
       if (roomId !== roomIdRef.current) return;
+      setRemoteStreams(prev => ({ ...prev, [phone]: { ...(prev[phone] || {}), phone, name: participantName || prev[phone]?.name || phone } }));
       roomMembers.filter(member => member !== currentUser.phone).forEach(member => {
         if (currentUser.phone < member && !pcsRef.current.has(member)) {
           getLocalMedia().then(() => createPeer(member, true)).catch(error => console.error('[Dialo] Could not connect participant', error));

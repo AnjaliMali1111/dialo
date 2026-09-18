@@ -174,7 +174,7 @@ io.on('connection', (socket) => {
   });
 
   // 4. Answer incoming call
-  socket.on('answer-call', ({ toPhone, answer, roomId, fromPhone: clientFromPhone }) => {
+  socket.on('answer-call', ({ toPhone, answer, roomId, fromName, fromPhone: clientFromPhone }) => {
     const fromPhone = socketToPhone.get(socket.id) || clientFromPhone;
     const cleanToPhone = toPhone ? toPhone.trim() : null;
     const roomMembers = addCallRoomMember(roomId, fromPhone);
@@ -183,6 +183,7 @@ io.on('connection', (socket) => {
     if (cleanToPhone) {
       io.to(`phone:${cleanToPhone}`).emit('call-accepted', {
         fromPhone,
+        participantName: fromName || fromPhone,
         answer,
         roomId: roomId || null,
         roomMembers
@@ -191,6 +192,7 @@ io.on('connection', (socket) => {
       if (roomId) {
         io.to(`call:${roomId}`).emit('call-participant-joined', {
           phone: fromPhone,
+          participantName: fromName || fromPhone,
           roomId,
           roomMembers
         });
