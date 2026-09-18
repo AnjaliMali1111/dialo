@@ -433,6 +433,20 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
     const onRoomMembers = async ({ roomId, roomMembers }) => {
       if (roomId !== roomIdRef.current || modeRef.current !== 'connected') return;
 
+      setRemoteStreams((prev) => {
+        const next = { ...prev };
+        for (const phone of roomMembers || []) {
+          if (!phone || phone === currentUser.phone) continue;
+          next[phone] = {
+            ...(next[phone] || {}),
+            phone,
+            name: next[phone]?.name || phone,
+            stream: next[phone]?.stream || null
+          };
+        }
+        return next;
+      });
+
       const peersToCall = (roomMembers || []).filter(
         (phone) => phone && phone !== currentUser.phone && !pcsRef.current.has(phone)
       );

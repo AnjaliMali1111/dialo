@@ -98,6 +98,14 @@ const removeCallRoomMember = (roomId, phone) => {
   });
 };
 
+const broadcastCallRoomMembers = (roomId) => {
+  const roomMembers = [...(callRoomMembers.get(roomId) || [])];
+  io.to(`call:${roomId}`).emit('call-room-members', {
+    roomId,
+    roomMembers
+  });
+};
+
 io.on('connection', (socket) => {
   console.log(`[Socket Connected] ID: ${socket.id}`);
 
@@ -252,6 +260,7 @@ io.on('connection', (socket) => {
       roomId: targetRoomId,
       roomMembers
     });
+    broadcastCallRoomMembers(targetRoomId);
   });
 
   // 5. Reject incoming call
