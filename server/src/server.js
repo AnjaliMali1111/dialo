@@ -126,7 +126,7 @@ io.on('connection', (socket) => {
   // --- WebRTC Signaling (Voice & Video) ---
 
   // 3. Initiate call (Voice or Video)
-  socket.on('call-user', async ({ toPhone, offer, callType, fromPhone: clientFromPhone }) => {
+  socket.on('call-user', async ({ toPhone, offer, callType, roomId, fromPhone: clientFromPhone }) => {
     const fromPhone = socketToPhone.get(socket.id) || clientFromPhone;
     if (!fromPhone || !toPhone) return;
 
@@ -155,12 +155,13 @@ io.on('connection', (socket) => {
       fromPhone: cleanFromPhone,
       callerName,
       offer,
-      callType: callType || 'voice'
+      callType: callType || 'voice',
+      roomId: roomId || null
     });
   });
 
   // 4. Answer incoming call
-  socket.on('answer-call', ({ toPhone, answer, fromPhone: clientFromPhone }) => {
+  socket.on('answer-call', ({ toPhone, answer, roomId, fromPhone: clientFromPhone }) => {
     const fromPhone = socketToPhone.get(socket.id) || clientFromPhone;
     const cleanToPhone = toPhone ? toPhone.trim() : null;
     console.log(`[WebRTC Answered] ${fromPhone} answered call from ${cleanToPhone}`);
@@ -168,7 +169,8 @@ io.on('connection', (socket) => {
     if (cleanToPhone) {
       io.to(`phone:${cleanToPhone}`).emit('call-accepted', {
         fromPhone,
-        answer
+        answer,
+        roomId: roomId || null
       });
     }
   });
@@ -198,14 +200,15 @@ io.on('connection', (socket) => {
   });
 
   // 7. End Call
-  socket.on('end-call', ({ toPhone, fromPhone: clientFromPhone }) => {
+  socket.on('end-call', ({ toPhone, roomId, fromPhone: clientFromPhone }) => {
     const fromPhone = socketToPhone.get(socket.id) || clientFromPhone;
     const cleanToPhone = toPhone ? toPhone.trim() : null;
     console.log(`[WebRTC Call Ended] ${fromPhone} ended call with ${cleanToPhone}`);
 
     if (cleanToPhone) {
       io.to(`phone:${cleanToPhone}`).emit('call-ended', {
-        fromPhone
+        fromPhone,
+        roomId: roomId || null
       });
     }
   });

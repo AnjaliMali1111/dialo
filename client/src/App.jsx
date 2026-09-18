@@ -163,12 +163,14 @@ export default function App() {
     // Incoming WebRTC call -> launches call modal for receiver
     const handleIncomingCall = (data) => {
       console.log('[Dialo] Incoming call received from:', data.fromPhone, 'Type:', data.callType);
+      if (callState) return;
       setCallState({
         type: 'incoming',
         callType: data.callType || 'voice',
         peerPhone: data.fromPhone,
         peerName: data.callerName || data.fromPhone,
-        offer: data.offer
+        offer: data.offer,
+        roomId: data.roomId || crypto.randomUUID()
       });
     };
 
@@ -184,7 +186,7 @@ export default function App() {
       socket.off('message-sent', handleMessageSent);
       socket.off('incoming-call', handleIncomingCall);
     };
-  }, [currentUser, loadConversations]);
+  }, [currentUser, loadConversations, callState]);
 
   // Handle Authentication Success
   const handleAuthenticated = (user) => {
@@ -224,7 +226,8 @@ export default function App() {
       type: 'outgoing',
       callType,
       peerPhone: activeConversation.peerPhone,
-      peerName: activeConversation.peerName || activeConversation.peerPhone
+      peerName: activeConversation.peerName || activeConversation.peerPhone,
+      roomId: crypto.randomUUID()
     });
   };
 
