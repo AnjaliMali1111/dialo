@@ -57,6 +57,16 @@ const io = new Server(server, {
 
 // Mapping socketId -> phone
 const socketToPhone = new Map();
+const callRoomMembers = new Map();
+
+const addCallRoomMember = (roomId, phone) => {
+  if (!roomId || !phone) return [];
+  const members = callRoomMembers.get(roomId) || new Set();
+  members.add(phone);
+  callRoomMembers.set(roomId, members);
+  io.in(`phone:${phone}`).socketsJoin(`call:${roomId}`);
+  return [...members];
+};
 
 io.on('connection', (socket) => {
   console.log(`[Socket Connected] ID: ${socket.id}`);
@@ -132,6 +142,8 @@ io.on('connection', (socket) => {
 
     const cleanToPhone = toPhone.trim();
     const cleanFromPhone = fromPhone.trim();
+    addCallRoomMember(roomId, cleanFromPhone);
+    const roomMembers = addCallRoomMember(roomId, cleanToPhone);
 
     // Check if recipient has active sockets in room
     const room = io.sockets.adapter.rooms.get(`phone:${cleanToPhone}`);
@@ -156,7 +168,8 @@ io.on('connection', (socket) => {
       callerName,
       offer,
       callType: callType || 'voice',
-      roomId: roomId || null
+      roomId: roomId || null,
+      roomMembers
     });
   });
 
@@ -164,14 +177,24 @@ io.on('connection', (socket) => {
   socket.on('answer-call', ({ toPhone, answer, roomId, fromPhone: clientFromPhone }) => {
     const fromPhone = socketToPhone.get(socket.id) || clientFromPhone;
     const cleanToPhone = toPhone ? toPhone.trim() : null;
+    const roomMembers = addCallRoomMember(roomId, fromPhone);
     console.log(`[WebRTC Answered] ${fromPhone} answered call from ${cleanToPhone}`);
 
     if (cleanToPhone) {
       io.to(`phone:${cleanToPhone}`).emit('call-accepted', {
         fromPhone,
         answer,
-        roomId: roomId || null
+        roomId: roomId || null,
+        roomMembers
       });
+
+      if (roomId) {
+        io.to(`call:${roomId}`).emit('call-participant-joined', {
+          phone: fromPhone,
+          roomId,
+          roomMembers
+        });
+      }
     }
   });
 
@@ -211,6 +234,11 @@ io.on('connection', (socket) => {
         roomId: roomId || null
       });
     }
+    if (roomId && callRoomMembers.has(roomId)) {
+      const members = callRoomMembers.get(roomId);
+      members.delete(fromPhone);
+      if (members.size === 0) callRoomMembers.delete(roomId);
+    }
   });
 
   // 8. Toggle Media state (mute mic or toggle camera)
@@ -230,6 +258,10 @@ io.on('connection', (socket) => {
     const phone = socketToPhone.get(socket.id);
     if (phone) {
       socketToPhone.delete(socket.id);
+      for (const [roomId, members] of callRoomMembers) {
+        members.delete(phone);
+        if (members.size === 0) callRoomMembers.delete(roomId);
+      }
       const room = io.sockets.adapter.rooms.get(`phone:${phone}`);
       console.log(`[Dialo Offline] ${phone} socket ${socket.id} closed. Remaining active: ${room ? room.size : 0}`);
     }

@@ -109,6 +109,31 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
       await pc.setRemoteDescription(new RTCSessionDescription(answer));
       setMode('connected');
     };
+    const onIncomingPeerOffer = async ({ fromPhone, offer, roomId }) => {
+      if (mode === 'incoming_ringing' || roomId !== roomIdRef.current || fromPhone === currentUser.phone) return;
+      try {
+        await getLocalMedia();
+        const pc = createPeer(fromPhone);
+        await pc.setRemoteDescription(new RTCSessionDescription(offer));
+        const queued = candidatesRef.current.get(fromPhone) || [];
+        for (const candidate of queued) await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        candidatesRef.current.delete(fromPhone);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit('answer-call', { toPhone: fromPhone, answer: pc.localDescription, roomId: roomIdRef.current });
+        setMode('connected');
+      } catch (error) {
+        console.error('[Dialo] Could not join peer connection', error);
+      }
+    };
+    const onParticipantJoined = ({ phone, roomId, roomMembers }) => {
+      if (roomId !== roomIdRef.current) return;
+      roomMembers.filter(member => member !== currentUser.phone).forEach(member => {
+        if (currentUser.phone < member && !pcsRef.current.has(member)) {
+          getLocalMedia().then(() => createPeer(member, true)).catch(error => console.error('[Dialo] Could not connect participant', error));
+        }
+      });
+    };
     const onIce = async ({ fromPhone, candidate }) => {
       const pc = pcsRef.current.get(fromPhone);
       if (pc?.remoteDescription) await pc.addIceCandidate(new RTCIceCandidate(candidate));
@@ -122,7 +147,7 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
         delete next[fromPhone];
         return next;
       });
-      if (fromPhone === callState.peerPhone) onEndCall();
+      if (pcsRef.current.size === 0) onEndCall();
     };
     const onRejected = ({ fromPhone }) => {
       if (fromPhone === callState.peerPhone) onEndCall();
@@ -132,6 +157,8 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
     };
 
     socket.on('call-accepted', onAccepted);
+    socket.on('incoming-call', onIncomingPeerOffer);
+    socket.on('call-participant-joined', onParticipantJoined);
     socket.on('ice-candidate', onIce);
     socket.on('call-ended', onEnded);
     socket.on('call-rejected', onRejected);
@@ -144,6 +171,8 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
     return () => {
       clearInterval(timer);
       socket.off('call-accepted', onAccepted);
+      socket.off('incoming-call', onIncomingPeerOffer);
+      socket.off('call-participant-joined', onParticipantJoined);
       socket.off('ice-candidate', onIce);
       socket.off('call-ended', onEnded);
       socket.off('call-rejected', onRejected);
