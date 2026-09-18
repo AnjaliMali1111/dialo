@@ -261,6 +261,8 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
     return pc;
   };
 
+  const shouldInitiatePeer = (phone) => currentUser.phone < phone;
+
   const acceptIncoming = async () => {
     try {
       await getLocalMedia();
@@ -400,6 +402,17 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
         }
       }));
 
+      // Existing members initiate only when their phone sorts first. This
+      // gives every pair one offerer and avoids WebRTC offer collisions.
+      if (shouldInitiatePeer(phone) && !pcsRef.current.has(phone)) {
+        try {
+          await getLocalMedia();
+          createPeer(phone, true);
+        } catch (err) {
+          console.error(`[Dialo] Error connecting to new participant ${phone}`, err);
+        }
+      }
+
     };
 
     const onRoomMembers = async ({ roomId, roomMembers }) => {
@@ -414,7 +427,7 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
       try {
         await getLocalMedia();
         for (const phone of peersToCall) {
-          createPeer(phone, true);
+          createPeer(phone, shouldInitiatePeer(phone));
         }
       } catch (err) {
         console.error('[Dialo] Error connecting to existing call members', err);
