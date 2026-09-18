@@ -179,6 +179,16 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
       });
       if (pcsRef.current.size === 0) onEndCall();
     };
+    const onParticipantLeft = ({ phone, roomId }) => {
+      if (roomId !== roomIdRef.current) return;
+      pcsRef.current.get(phone)?.close();
+      pcsRef.current.delete(phone);
+      setRemoteStreams(prev => {
+        const next = { ...prev };
+        delete next[phone];
+        return next;
+      });
+    };
     const onRejected = ({ fromPhone }) => {
       if (fromPhone === callState.peerPhone) onEndCall();
     };
@@ -191,6 +201,7 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
     socket.on('call-participant-joined', onParticipantJoined);
     socket.on('ice-candidate', onIce);
     socket.on('call-ended', onEnded);
+    socket.on('call-participant-left', onParticipantLeft);
     socket.on('call-rejected', onRejected);
     socket.on('call-failed', onFailed);
     if (mode === 'connected') timer = setInterval(() => setDuration(value => value + 1), 1000);
@@ -205,6 +216,7 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
       socket.off('call-participant-joined', onParticipantJoined);
       socket.off('ice-candidate', onIce);
       socket.off('call-ended', onEnded);
+      socket.off('call-participant-left', onParticipantLeft);
       socket.off('call-rejected', onRejected);
       socket.off('call-failed', onFailed);
     };
