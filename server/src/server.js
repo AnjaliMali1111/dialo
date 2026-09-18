@@ -57,35 +57,45 @@ const io = new Server(server, {
 
 // Mapping socketId -> phone
 const socketToPhone = new Map();
-const callRoomMembers = new Map();
-const phoneToCallRoom = new Map();
+const callRoomMembers = new Map(); // roomId -> Set of phones in call
+const phoneToCallRoom = new Map(); // phone -> roomId
 
 const addCallRoomMember = (roomId, phone) => {
   if (!roomId || !phone) return [];
+  const cleanPhone = phone.trim();
   const members = callRoomMembers.get(roomId) || new Set();
-  members.add(phone);
+  members.add(cleanPhone);
   callRoomMembers.set(roomId, members);
-  phoneToCallRoom.set(phone, roomId);
-  io.in(`phone:${phone}`).socketsJoin(`call:${roomId}`);
+  phoneToCallRoom.set(cleanPhone, roomId);
+  io.in(`phone:${cleanPhone}`).socketsJoin(`call:${roomId}`);
   return [...members];
 };
 
 const removeCallRoomMember = (roomId, phone) => {
-  const members = callRoomMembers.get(roomId);
-  if (!members || !members.has(phone)) return;
+  if (!phone) return;
+  const cleanPhone = phone.trim();
+  const targetRoomId = roomId || phoneToCallRoom.get(cleanPhone);
+  if (!targetRoomId) return;
 
-  members.delete(phone);
-  if (phoneToCallRoom.get(phone) === roomId) phoneToCallRoom.delete(phone);
-  io.in(`phone:${phone}`).socketsLeave(`call:${roomId}`);
+  const members = callRoomMembers.get(targetRoomId);
+  if (members) {
+    members.delete(cleanPhone);
+    if (members.size === 0) {
+      callRoomMembers.delete(targetRoomId);
+    }
+  }
 
-  const remainingMembers = [...members];
-  io.to(`call:${roomId}`).emit('call-participant-left', {
-    phone,
-    roomId,
+  if (phoneToCallRoom.get(cleanPhone) === targetRoomId) {
+    phoneToCallRoom.delete(cleanPhone);
+  }
+  io.in(`phone:${cleanPhone}`).socketsLeave(`call:${targetRoomId}`);
+
+  const remainingMembers = members ? [...members] : [];
+  io.to(`call:${targetRoomId}`).emit('call-participant-left', {
+    phone: cleanPhone,
+    roomId: targetRoomId,
     roomMembers: remainingMembers
   });
-
-  if (members.size === 0) callRoomMembers.delete(roomId);
 };
 
 io.on('connection', (socket) => {
@@ -156,7 +166,7 @@ io.on('connection', (socket) => {
   // --- WebRTC Signaling (Voice & Video) ---
 
   // 3. Initiate call (Voice or Video)
-  socket.on('call-user', async ({ toPhone, offer, callType, roomId, fromPhone: clientFromPhone }) => {
+  socket.on('call-user', async ({ toPhone, offer, callType, roomId, fromPhone: clientFromPhone, fromName }) => {
     const fromPhone = socketToPhone.get(socket.id) || clientFromPhone;
     if (!fromPhone || !toPhone) return;
 
@@ -176,22 +186,36 @@ io.on('connection', (socket) => {
       return;
     }
 
-    const activeRoomId = phoneToCallRoom.get(cleanFromPhone) || roomId;
+    // Check if recipient is busy in a DIFFERENT call room
+    const existingTargetRoom = phoneToCallRoom.get(cleanToPhone);
+    const existingCallerRoom = phoneToCallRoom.get(cleanFromPhone);
+    const activeRoomId = existingCallerRoom || roomId || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString());
+
+    if (existingTargetRoom && existingTargetRoom !== activeRoomId) {
+      socket.emit('call-failed', {
+        reason: 'busy',
+        toPhone: cleanToPhone,
+        message: `${cleanToPhone} is currently busy on another call.`
+      });
+      return;
+    }
+
+    // Add caller to room (callee is added ONLY when they answer!)
     addCallRoomMember(activeRoomId, cleanFromPhone);
-    const roomMembers = addCallRoomMember(activeRoomId, cleanToPhone);
+    const currentMembers = [...(callRoomMembers.get(activeRoomId) || [])];
 
     const callerUser = await User.findOne({ phone: cleanFromPhone }).lean();
-    const callerName = callerUser ? (callerUser.name || cleanFromPhone) : cleanFromPhone;
+    const callerName = fromName || (callerUser ? (callerUser.name || cleanFromPhone) : cleanFromPhone);
 
-    console.log(`[WebRTC Call] ${cleanFromPhone} (${callerName}) calling ${cleanToPhone} [Type: ${callType}] | Recipient online: ${isOnline}`);
+    console.log(`[WebRTC Call] ${cleanFromPhone} (${callerName}) calling ${cleanToPhone} [Type: ${callType}] in Room: ${activeRoomId}`);
 
     io.to(`phone:${cleanToPhone}`).emit('incoming-call', {
       fromPhone: cleanFromPhone,
       callerName,
       offer,
       callType: callType || 'voice',
-      roomId: activeRoomId || null,
-      roomMembers
+      roomId: activeRoomId,
+      roomMembers: currentMembers
     });
   });
 
@@ -199,41 +223,47 @@ io.on('connection', (socket) => {
   socket.on('answer-call', ({ toPhone, answer, roomId, fromName, fromPhone: clientFromPhone }) => {
     const fromPhone = socketToPhone.get(socket.id) || clientFromPhone;
     const cleanToPhone = toPhone ? toPhone.trim() : null;
-    const roomMembers = addCallRoomMember(roomId, fromPhone);
-    console.log(`[WebRTC Answered] ${fromPhone} answered call from ${cleanToPhone}`);
+    const cleanFromPhone = fromPhone ? fromPhone.trim() : null;
+    if (!cleanFromPhone) return;
+
+    const targetRoomId = roomId || phoneToCallRoom.get(cleanToPhone) || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString());
+    const roomMembers = addCallRoomMember(targetRoomId, cleanFromPhone);
+    console.log(`[WebRTC Answered] ${cleanFromPhone} answered call for room ${targetRoomId}. Members:`, roomMembers);
 
     if (cleanToPhone) {
       io.to(`phone:${cleanToPhone}`).emit('call-accepted', {
-        fromPhone,
-        participantName: fromName || fromPhone,
+        fromPhone: cleanFromPhone,
+        participantName: fromName || cleanFromPhone,
         answer,
-        roomId: roomId || null,
+        roomId: targetRoomId,
         roomMembers
       });
-
-      if (roomId) {
-        io.to(`call:${roomId}`).emit('call-participant-joined', {
-          phone: fromPhone,
-          participantName: fromName || fromPhone,
-          roomId,
-          roomMembers
-        });
-      }
     }
+
+    // Broadcast to existing room members that new participant joined
+    socket.to(`call:${targetRoomId}`).emit('call-participant-joined', {
+      phone: cleanFromPhone,
+      participantName: fromName || cleanFromPhone,
+      roomId: targetRoomId,
+      roomMembers
+    });
   });
 
   // 5. Reject incoming call
   socket.on('reject-call', ({ toPhone, roomId, fromPhone: clientFromPhone }) => {
     const fromPhone = socketToPhone.get(socket.id) || clientFromPhone;
     const cleanToPhone = toPhone ? toPhone.trim() : null;
-    console.log(`[WebRTC Rejected] ${fromPhone} rejected call from ${cleanToPhone}`);
+    const cleanFromPhone = fromPhone ? fromPhone.trim() : null;
+    console.log(`[WebRTC Rejected] ${cleanFromPhone} rejected call from ${cleanToPhone}`);
 
     if (cleanToPhone) {
       io.to(`phone:${cleanToPhone}`).emit('call-rejected', {
-        fromPhone
+        fromPhone: cleanFromPhone
       });
     }
-    removeCallRoomMember(roomId || phoneToCallRoom.get(fromPhone), fromPhone);
+    if (cleanFromPhone) {
+      removeCallRoomMember(roomId, cleanFromPhone);
+    }
   });
 
   // 6. ICE Candidate exchange
@@ -247,20 +277,26 @@ io.on('connection', (socket) => {
     }
   });
 
-  // 7. End Call
-  socket.on('end-call', ({ toPhone, roomId, fromPhone: clientFromPhone }) => {
+  // 7. End Call / Leave Call
+  const handleLeaveCall = ({ toPhone, roomId, fromPhone: clientFromPhone }) => {
     const fromPhone = socketToPhone.get(socket.id) || clientFromPhone;
     const cleanToPhone = toPhone ? toPhone.trim() : null;
-    console.log(`[WebRTC Call Ended] ${fromPhone} ended call with ${cleanToPhone}`);
+    const cleanFromPhone = fromPhone ? fromPhone.trim() : null;
+    console.log(`[WebRTC Call Left/Ended] ${cleanFromPhone} left call room ${roomId}`);
 
     if (cleanToPhone) {
       io.to(`phone:${cleanToPhone}`).emit('call-ended', {
-        fromPhone,
+        fromPhone: cleanFromPhone,
         roomId: roomId || null
       });
     }
-    removeCallRoomMember(roomId, fromPhone);
-  });
+    if (cleanFromPhone) {
+      removeCallRoomMember(roomId, cleanFromPhone);
+    }
+  };
+
+  socket.on('end-call', handleLeaveCall);
+  socket.on('leave-call', handleLeaveCall);
 
   // 8. Toggle Media state (mute mic or toggle camera)
   socket.on('toggle-media', ({ toPhone, type, enabled, fromPhone: clientFromPhone }) => {
@@ -280,7 +316,12 @@ io.on('connection', (socket) => {
     if (phone) {
       socketToPhone.delete(socket.id);
       for (const [roomId, members] of callRoomMembers) {
-        if (members.has(phone)) removeCallRoomMember(roomId, phone);
+        if (members.has(phone)) {
+          removeCallRoomMember(roomId, phone);
+        }
+      }
+      if (phoneToCallRoom.has(phone)) {
+        phoneToCallRoom.delete(phone);
       }
       const room = io.sockets.adapter.rooms.get(`phone:${phone}`);
       console.log(`[Dialo Offline] ${phone} socket ${socket.id} closed. Remaining active: ${room ? room.size : 0}`);
