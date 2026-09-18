@@ -23,9 +23,13 @@ export default function App() {
 
   // Keep a ref to activeConversation so socket event listeners read it without updater side effects
   const activeConversationRef = useRef(activeConversation);
+  const callStateRef = useRef(callState);
   useEffect(() => {
     activeConversationRef.current = activeConversation;
   }, [activeConversation]);
+  useEffect(() => {
+    callStateRef.current = callState;
+  }, [callState]);
 
   // Load conversations
   const loadConversations = useCallback(async () => {
@@ -84,11 +88,6 @@ export default function App() {
     } else {
       socket.on('connect', onConnect);
     }
-
-    // Clean previous text listeners
-    socket.off('receive-message');
-    socket.off('message-sent');
-    socket.off('incoming-call');
 
     // New incoming text message
     const handleReceiveMessage = (msg) => {
@@ -163,7 +162,7 @@ export default function App() {
     // Incoming WebRTC call -> launches call modal for receiver
     const handleIncomingCall = (data) => {
       console.log('[Dialo] Incoming call received from:', data.fromPhone, 'Type:', data.callType);
-      if (callState) return;
+      if (callStateRef.current) return;
       setCallState({
         type: 'incoming',
         callType: data.callType || 'voice',
@@ -186,7 +185,7 @@ export default function App() {
       socket.off('message-sent', handleMessageSent);
       socket.off('incoming-call', handleIncomingCall);
     };
-  }, [currentUser, loadConversations, callState]);
+  }, [currentUser, loadConversations]);
 
   // Handle Authentication Success
   const handleAuthenticated = (user) => {

@@ -60,6 +60,16 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
         setRemoteStreams(prev => ({ ...prev, [phone]: { phone, name: phone, stream: event.streams[0] } }));
       }
     };
+    pc.onconnectionstatechange = () => {
+      if (['failed', 'closed'].includes(pc.connectionState)) {
+        pcsRef.current.delete(phone);
+        setRemoteStreams(prev => {
+          const next = { ...prev };
+          delete next[phone];
+          return next;
+        });
+      }
+    };
 
     if (shouldOffer) {
       pc.createOffer()
@@ -236,7 +246,7 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
             <h2 className="mt-1 text-xl font-bold">{callState.peerName || callState.peerPhone}</h2>
             <p className="text-sm text-slate-400">{mode === 'connected' ? displayTime : mode === 'incoming_ringing' ? 'Incoming call' : 'Calling...'}</p>
           </div>
-          <button onClick={onEndCall} className="rounded-full p-2 text-slate-400 hover:bg-slate-800 hover:text-white" title="Close"><X /></button>
+          <button onClick={endCall} className="rounded-full p-2 text-slate-400 hover:bg-slate-800 hover:text-white" title="Leave call"><X /></button>
         </div>
 
         {mode === 'incoming_ringing' ? (
