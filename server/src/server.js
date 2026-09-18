@@ -58,12 +58,14 @@ const io = new Server(server, {
 // Mapping socketId -> phone
 const socketToPhone = new Map();
 const callRoomMembers = new Map();
+const phoneToCallRoom = new Map();
 
 const addCallRoomMember = (roomId, phone) => {
   if (!roomId || !phone) return [];
   const members = callRoomMembers.get(roomId) || new Set();
   members.add(phone);
   callRoomMembers.set(roomId, members);
+  phoneToCallRoom.set(phone, roomId);
   io.in(`phone:${phone}`).socketsJoin(`call:${roomId}`);
   return [...members];
 };
@@ -142,17 +144,10 @@ io.on('connection', (socket) => {
 
     const cleanToPhone = toPhone.trim();
     const cleanFromPhone = fromPhone.trim();
-    addCallRoomMember(roomId, cleanFromPhone);
-    const roomMembers = addCallRoomMember(roomId, cleanToPhone);
 
     // Check if recipient has active sockets in room
     const room = io.sockets.adapter.rooms.get(`phone:${cleanToPhone}`);
     const isOnline = room && room.size > 0;
-
-    const callerUser = await User.findOne({ phone: cleanFromPhone }).lean();
-    const callerName = callerUser ? (callerUser.name || cleanFromPhone) : cleanFromPhone;
-
-    console.log(`[WebRTC Call] ${cleanFromPhone} (${callerName}) calling ${cleanToPhone} [Type: ${callType}] | Recipient online: ${isOnline}`);
 
     if (!isOnline) {
       socket.emit('call-failed', {
@@ -163,12 +158,21 @@ io.on('connection', (socket) => {
       return;
     }
 
+    const activeRoomId = phoneToCallRoom.get(cleanFromPhone) || roomId;
+    addCallRoomMember(activeRoomId, cleanFromPhone);
+    const roomMembers = addCallRoomMember(activeRoomId, cleanToPhone);
+
+    const callerUser = await User.findOne({ phone: cleanFromPhone }).lean();
+    const callerName = callerUser ? (callerUser.name || cleanFromPhone) : cleanFromPhone;
+
+    console.log(`[WebRTC Call] ${cleanFromPhone} (${callerName}) calling ${cleanToPhone} [Type: ${callType}] | Recipient online: ${isOnline}`);
+
     io.to(`phone:${cleanToPhone}`).emit('incoming-call', {
       fromPhone: cleanFromPhone,
       callerName,
       offer,
       callType: callType || 'voice',
-      roomId: roomId || null,
+      roomId: activeRoomId || null,
       roomMembers
     });
   });
@@ -211,6 +215,13 @@ io.on('connection', (socket) => {
         fromPhone
       });
     }
+    const rejectedRoomId = phoneToCallRoom.get(fromPhone);
+    if (rejectedRoomId && callRoomMembers.has(rejectedRoomId)) {
+      const members = callRoomMembers.get(rejectedRoomId);
+      members.delete(fromPhone);
+      phoneToCallRoom.delete(fromPhone);
+      if (members.size === 0) callRoomMembers.delete(rejectedRoomId);
+    }
   });
 
   // 6. ICE Candidate exchange
@@ -239,6 +250,7 @@ io.on('connection', (socket) => {
     if (roomId && callRoomMembers.has(roomId)) {
       const members = callRoomMembers.get(roomId);
       members.delete(fromPhone);
+      if (phoneToCallRoom.get(fromPhone) === roomId) phoneToCallRoom.delete(fromPhone);
       if (members.size === 0) callRoomMembers.delete(roomId);
     }
   });
@@ -262,6 +274,7 @@ io.on('connection', (socket) => {
       socketToPhone.delete(socket.id);
       for (const [roomId, members] of callRoomMembers) {
         members.delete(phone);
+        if (phoneToCallRoom.get(phone) === roomId) phoneToCallRoom.delete(phone);
         if (members.size === 0) callRoomMembers.delete(roomId);
       }
       const room = io.sockets.adapter.rooms.get(`phone:${phone}`);
