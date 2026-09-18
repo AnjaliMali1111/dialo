@@ -240,6 +240,11 @@ io.on('connection', (socket) => {
       });
     }
 
+    socket.emit('call-room-members', {
+      roomId: targetRoomId,
+      roomMembers
+    });
+
     // Broadcast to existing room members that new participant joined
     socket.to(`call:${targetRoomId}`).emit('call-participant-joined', {
       phone: cleanFromPhone,

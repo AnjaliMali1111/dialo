@@ -271,6 +271,9 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
 
+      modeRef.current = 'connected';
+      setMode('connected');
+
       socket.emit('answer-call', {
         toPhone: callState.peerPhone,
         answer: pc.localDescription,
@@ -287,8 +290,6 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
           stream: prev[callState.peerPhone]?.stream || null
         }
       }));
-
-      setMode('connected');
 
       // Process any pending offers received while ringing
       for (const [pendingPhone, pendingData] of pendingOffersRef.current.entries()) {
@@ -399,14 +400,24 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
         }
       }));
 
-      // If we are already connected, initiate peer connection to the newly joined member
-      if (!pcsRef.current.has(phone) && modeRef.current === 'connected') {
-        try {
-          await getLocalMedia();
+    };
+
+    const onRoomMembers = async ({ roomId, roomMembers }) => {
+      if (roomId !== roomIdRef.current || modeRef.current !== 'connected') return;
+
+      const peersToCall = (roomMembers || []).filter(
+        (phone) => phone && phone !== currentUser.phone && !pcsRef.current.has(phone)
+      );
+
+      if (peersToCall.length === 0) return;
+
+      try {
+        await getLocalMedia();
+        for (const phone of peersToCall) {
           createPeer(phone, true);
-        } catch (err) {
-          console.error(`[Dialo] Error initiating connection to new member ${phone}`, err);
         }
+      } catch (err) {
+        console.error('[Dialo] Error connecting to existing call members', err);
       }
     };
 
@@ -459,6 +470,7 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
     socket.on('call-accepted', onAccepted);
     socket.on('incoming-call', onIncomingPeerOffer);
     socket.on('call-participant-joined', onParticipantJoined);
+    socket.on('call-room-members', onRoomMembers);
     socket.on('ice-candidate', onIce);
     socket.on('call-ended', onEnded);
     socket.on('call-participant-left', onParticipantLeft);
@@ -483,6 +495,7 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
       socket.off('call-accepted', onAccepted);
       socket.off('incoming-call', onIncomingPeerOffer);
       socket.off('call-participant-joined', onParticipantJoined);
+      socket.off('call-room-members', onRoomMembers);
       socket.off('ice-candidate', onIce);
       socket.off('call-ended', onEnded);
       socket.off('call-participant-left', onParticipantLeft);
