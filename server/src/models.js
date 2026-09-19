@@ -109,14 +109,25 @@ const messageSchema = new mongoose.Schema({
   }
 });
 
+const scheduledCallSchema = new mongoose.Schema({
+  creatorPhone: { type: String, required: true, index: true },
+  participantPhone: { type: String, required: true, index: true },
+  callType: { type: String, enum: ['voice', 'video'], default: 'voice' },
+  scheduledAt: { type: Date, required: true, index: true },
+  status: { type: String, enum: ['pending', 'notified', 'cancelled'], default: 'pending', index: true },
+  createdAt: { type: Date, default: Date.now }
+});
+
 const User = mongoose.model('User', userSchema);
 const Otp = mongoose.model('Otp', otpSchema);
 const Conversation = mongoose.model('Conversation', conversationSchema);
 const Message = mongoose.model('Message', messageSchema);
+const ScheduledCall = mongoose.model('ScheduledCall', scheduledCallSchema);
 
 module.exports = {
   User,
   Otp,
   Conversation,
-  Message
+  Message,
+  ScheduledCall
 };

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Phone, Video, X } from 'lucide-react';
 import AuthScreen from './components/AuthScreen';
 import ConversationList from './components/ConversationList';
 import ChatArea from './components/ChatArea';
@@ -20,6 +21,7 @@ export default function App() {
   const [activeConversation, setActiveConversation] = useState(null);
   const [messages, setMessages] = useState([]);
   const [callState, setCallState] = useState(null);
+  const [scheduledNotification, setScheduledNotification] = useState(null);
 
   // Keep a ref to activeConversation so socket event listeners read it without updater side effects
   const activeConversationRef = useRef(activeConversation);
@@ -173,9 +175,14 @@ export default function App() {
       });
     };
 
+    const handleScheduledCallDue = (data) => {
+      setScheduledNotification(data);
+    };
+
     socket.on('receive-message', handleReceiveMessage);
     socket.on('message-sent', handleMessageSent);
     socket.on('incoming-call', handleIncomingCall);
+    socket.on('scheduled-call-due', handleScheduledCallDue);
 
     loadConversations();
 
@@ -184,6 +191,7 @@ export default function App() {
       socket.off('receive-message', handleReceiveMessage);
       socket.off('message-sent', handleMessageSent);
       socket.off('incoming-call', handleIncomingCall);
+      socket.off('scheduled-call-due', handleScheduledCallDue);
     };
   }, [currentUser, loadConversations]);
 
@@ -230,6 +238,19 @@ export default function App() {
     });
   };
 
+  const handleStartScheduledCall = () => {
+    if (!scheduledNotification) return;
+    const isCreator = scheduledNotification.creatorPhone === currentUser.phone;
+    setCallState({
+      type: 'outgoing',
+      callType: scheduledNotification.callType,
+      peerPhone: isCreator ? scheduledNotification.participantPhone : scheduledNotification.creatorPhone,
+      peerName: isCreator ? scheduledNotification.participantName : scheduledNotification.creatorName,
+      roomId: crypto.randomUUID()
+    });
+    setScheduledNotification(null);
+  };
+
   // Handle Ending or Closing a Call
   const handleEndCall = () => {
     setCallState(null);
@@ -269,6 +290,22 @@ export default function App() {
         onSendMessage={handleSendMessage}
         onStartCall={handleStartCall}
       />
+
+      {scheduledNotification && (
+        <div className="fixed bottom-5 right-5 z-40 w-[min(24rem,calc(100vw-2rem))] rounded-2xl border border-amber-500/30 bg-slate-900 p-4 shadow-2xl">
+          <div className="flex items-start gap-3">
+            <div className="rounded-xl bg-amber-500/15 p-2 text-amber-300">
+              {scheduledNotification.callType === 'video' ? <Video className="h-5 w-5" /> : <Phone className="h-5 w-5" />}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold text-white">Scheduled call is ready</p>
+              <p className="mt-1 text-xs text-slate-400">Start your {scheduledNotification.callType} call with {scheduledNotification.creatorPhone === currentUser.phone ? scheduledNotification.participantName : scheduledNotification.creatorName}.</p>
+              <button onClick={handleStartScheduledCall} className="mt-3 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-medium text-white hover:bg-indigo-500">Start call</button>
+            </div>
+            <button onClick={() => setScheduledNotification(null)} className="text-slate-500 hover:text-white" title="Dismiss"><X className="h-4 w-4" /></button>
+          </div>
+        </div>
+      )}
 
       {/* WebRTC Call Overlay (Voice / Video) */}
       {callState && (

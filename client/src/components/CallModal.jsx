@@ -43,10 +43,19 @@ function MediaTile({ stream, isVideo, muted, label, local = false }) {
       setHasVideo(active);
     };
 
+    const checkVideoWhenReady = () => {
+      checkVideo();
+      if (el.readyState >= 2) setHasVideo(true);
+    };
+
     if (stream) {
       el.srcObject = stream;
       el.play?.().catch(() => {});
       checkVideo();
+      el.addEventListener('loadedmetadata', checkVideoWhenReady);
+      el.addEventListener('loadeddata', checkVideoWhenReady);
+      el.addEventListener('canplay', checkVideoWhenReady);
+      el.addEventListener('playing', checkVideoWhenReady);
       stream.addEventListener('addtrack', checkVideo);
       stream.addEventListener('removetrack', checkVideo);
     } else {
@@ -56,6 +65,10 @@ function MediaTile({ stream, isVideo, muted, label, local = false }) {
 
     return () => {
       if (stream) {
+        el.removeEventListener('loadedmetadata', checkVideoWhenReady);
+        el.removeEventListener('loadeddata', checkVideoWhenReady);
+        el.removeEventListener('canplay', checkVideoWhenReady);
+        el.removeEventListener('playing', checkVideoWhenReady);
         stream.removeEventListener('addtrack', checkVideo);
         stream.removeEventListener('removetrack', checkVideo);
       }
@@ -78,7 +91,7 @@ function MediaTile({ stream, isVideo, muted, label, local = false }) {
   }
 
   return (
-    <div className="relative min-h-[200px] overflow-hidden rounded-2xl border border-slate-700 bg-slate-950 flex items-center justify-center shadow-lg">
+    <div className="relative min-h-[160px] overflow-hidden rounded-2xl border border-slate-700 bg-slate-950 flex items-center justify-center shadow-lg">
       <video
         ref={mediaRef}
         autoPlay
@@ -114,6 +127,7 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
   const pcsRef = useRef(new Map());
   const candidatesRef = useRef(new Map());
   const pendingOffersRef = useRef(new Map());
+  const recoveryAttemptsRef = useRef(new Map());
   const localStreamRef = useRef(null);
   const roomIdRef = useRef(callState.roomId || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString()));
   const isVideo = callState.callType === 'video';
@@ -170,6 +184,7 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
     }
     candidatesRef.current.delete(phone);
     pendingOffersRef.current.delete(phone);
+      recoveryAttemptsRef.current.delete(phone);
 
     setRemoteStreams((prev) => {
       const next = { ...prev };
@@ -248,10 +263,33 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
       });
     };
 
-    pc.onconnectionstatechange = () => {
+    pc.onconnectionstatechange = async () => {
       console.log(`[Dialo] Connection state with ${phone}: ${pc.connectionState}`);
-      if (['failed', 'closed'].includes(pc.connectionState)) {
+      if (pc.connectionState === 'failed') {
+        const attempts = recoveryAttemptsRef.current.get(phone) || 0;
+        if (attempts < 1 && pc.signalingState !== 'closed') {
+          recoveryAttemptsRef.current.set(phone, attempts + 1);
+          try {
+            const offer = await pc.createOffer({ iceRestart: true });
+            await pc.setLocalDescription(offer);
+            socket.emit('call-user', {
+              toPhone: phone,
+              fromName: currentUser.name || currentUser.phone,
+              fromPhone: currentUser.phone,
+              offer: pc.localDescription,
+              callType: callState.callType,
+              roomId: roomIdRef.current
+            });
+            return;
+          } catch (error) {
+            console.warn(`[Dialo] ICE recovery failed for ${phone}`, error);
+          }
+        }
         removePeer(phone);
+      } else if (pc.connectionState === 'closed') {
+        removePeer(phone);
+      } else if (pc.connectionState === 'connected') {
+        recoveryAttemptsRef.current.delete(phone);
       }
     };
 
@@ -276,8 +314,6 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
 
     return pc;
   };
-
-  const shouldInitiatePeer = (phone) => currentUser.phone < phone;
 
   const acceptIncoming = async () => {
     try {
@@ -339,7 +375,7 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
     let timer;
 
     // 1. Peer accepted our offer
-    const onAccepted = async ({ fromPhone, participantName, answer }) => {
+    const onAccepted = async ({ fromPhone, participantName, answer, roomMembers }) => {
       console.log(`[Dialo] call-accepted from ${fromPhone}`);
       const pc = pcsRef.current.get(fromPhone);
       if (!pc) return;
@@ -354,7 +390,20 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
             stream: prev[fromPhone]?.stream || null
           }
         }));
+        modeRef.current = 'connected';
         setMode('connected');
+
+        // The caller can receive this event before the separate room-member
+        // broadcast. Reconcile the full room now so every pair gets a peer.
+        const missingPeers = (roomMembers || []).filter(
+          (phone) => phone && phone !== currentUser.phone && !pcsRef.current.has(phone)
+        );
+        if (missingPeers.length > 0) {
+          await getLocalMedia();
+          for (const phone of missingPeers) {
+            createPeer(phone, true);
+          }
+        }
       } catch (err) {
         console.error(`[Dialo] Error setting remote description for ${fromPhone}`, err);
       }
@@ -418,9 +467,9 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
         }
       }));
 
-      // Existing members initiate only when their phone sorts first. This
-      // gives every pair one offerer and avoids WebRTC offer collisions.
-      if (shouldInitiatePeer(phone) && !pcsRef.current.has(phone)) {
+      // Existing members offer to the newcomer. The newcomer creates passive
+      // peer connections and answers, so each new pair has one offerer.
+      if (!pcsRef.current.has(phone)) {
         try {
           await getLocalMedia();
           createPeer(phone, true);
@@ -456,9 +505,7 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
 
       try {
         await getLocalMedia();
-        for (const phone of peersToCall) {
-          createPeer(phone, shouldInitiatePeer(phone));
-        }
+        for (const phone of peersToCall) createPeer(phone, false);
       } catch (err) {
         console.error('[Dialo] Error connecting to existing call members', err);
       }
@@ -545,7 +592,7 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
       socket.off('call-rejected', onRejected);
       socket.off('call-failed', onFailed);
     };
-  }, [callState.peerPhone, callState.type, mode]);
+  }, [callState.peerPhone, callState.type]);
 
   const cleanupCall = () => {
     if (localStreamRef.current) {
@@ -690,7 +737,7 @@ export default function CallModal({ callState, currentUser, onEndCall }) {
           </div>
         ) : (
           <>
-            <div className={`mt-6 grid min-h-[300px] flex-1 gap-4 ${isVideo ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 sm:grid-cols-3'}`}>
+            <div className={`mt-6 grid min-h-[300px] flex-1 gap-4 ${isVideo ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3' : 'grid-cols-1 sm:grid-cols-3'}`}>
               {/* Local Tile (You) */}
               {isVideo && localStream && (
                 <MediaTile stream={localStream} isVideo muted local label={`${currentUser.name || 'You'} (You)`} />

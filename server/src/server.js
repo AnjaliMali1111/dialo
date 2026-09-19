@@ -8,8 +8,9 @@ const cors = require('cors');
 const mongoose = require('mongoose');
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
 
-const { User, Conversation, Message } = require('./models');
+const { User, Conversation, Message, ScheduledCall } = require('./models');
 const authRoutes = require('./authRoutes');
+const scheduleRoutes = require('./scheduleRoutes');
 
 const app = express();
 const keyPath = path.join(__dirname, '..', '..', 'client', 'localhost+2-key.pem');
@@ -36,6 +37,7 @@ app.use(express.json());
 
 // API Routes
 app.use('/api', authRoutes);
+app.use('/api', scheduleRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -353,6 +355,45 @@ io.on('connection', (socket) => {
     }
   });
 });
+
+async function notifyDueScheduledCalls() {
+  try {
+    const now = new Date();
+    let schedule = await ScheduledCall.findOneAndUpdate(
+      { status: 'pending', scheduledAt: { $lte: now } },
+      { status: 'notified' },
+      { sort: { scheduledAt: 1 }, new: true }
+    ).lean();
+
+    while (schedule) {
+      const creator = await User.findOne({ phone: schedule.creatorPhone }).lean();
+      const participant = await User.findOne({ phone: schedule.participantPhone }).lean();
+      const payload = {
+        scheduleId: schedule._id,
+        callType: schedule.callType,
+        scheduledAt: schedule.scheduledAt,
+        creatorPhone: schedule.creatorPhone,
+        creatorName: creator?.name || schedule.creatorPhone,
+        participantPhone: schedule.participantPhone,
+        participantName: participant?.name || schedule.participantPhone
+      };
+
+      io.to(`phone:${schedule.creatorPhone}`).emit('scheduled-call-due', payload);
+      io.to(`phone:${schedule.participantPhone}`).emit('scheduled-call-due', payload);
+
+      schedule = await ScheduledCall.findOneAndUpdate(
+        { status: 'pending', scheduledAt: { $lte: new Date() } },
+        { status: 'notified' },
+        { sort: { scheduledAt: 1 }, new: true }
+      ).lean();
+    }
+  } catch (error) {
+    console.error('Error notifying scheduled calls:', error);
+  }
+}
+
+const scheduledCallTimer = setInterval(notifyDueScheduledCalls, 5000);
+scheduledCallTimer.unref?.();
 
 // Connect to MongoDB and start HTTP server
 mongoose.connect(MONGODB_URI)

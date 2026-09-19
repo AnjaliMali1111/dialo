@@ -69,5 +69,14 @@ export const api = {
       headers: { ...getAuthHeader() }
     });
     return res.json();
+  },
+
+  async scheduleCall(participantPhone, callType, scheduledAt) {
+    const res = await fetch(`${BASE_URL}/api/scheduled-calls`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+      body: JSON.stringify({ participantPhone, callType, scheduledAt })
+    });
+    return res.json();
   }
 };

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Phone, Video, Send, MessageSquare } from 'lucide-react';
+import { Phone, Video, Send, MessageSquare, CalendarClock, X } from 'lucide-react';
+import { api } from '../services/api';
 
 export default function ChatArea({
   conversation,
@@ -9,6 +10,11 @@ export default function ChatArea({
   onStartCall
 }) {
   const [inputText, setInputText] = useState('');
+  const [showSchedule, setShowSchedule] = useState(false);
+  const [participantPhone, setParticipantPhone] = useState('');
+  const [scheduleType, setScheduleType] = useState('video');
+  const [scheduledAt, setScheduledAt] = useState('');
+  const [scheduleMessage, setScheduleMessage] = useState('');
   const messagesEndRef = useRef(null);
 
   // Auto-scroll to latest message
@@ -42,6 +48,29 @@ export default function ChatArea({
     if (!dateStr) return '';
     const date = new Date(dateStr);
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const handleSchedule = async (event) => {
+    event.preventDefault();
+    try {
+      const result = await api.scheduleCall(
+        participantPhone,
+        scheduleType,
+        new Date(scheduledAt).toISOString()
+      );
+      if (!result.success) {
+        setScheduleMessage(result.message || 'Could not schedule call.');
+        return;
+      }
+      setScheduleMessage('Call scheduled successfully.');
+      setScheduledAt('');
+      setTimeout(() => {
+        setShowSchedule(false);
+        setScheduleMessage('');
+      }, 1200);
+    } catch (error) {
+      setScheduleMessage('Could not schedule call.');
+    }
   };
 
   return (
@@ -79,8 +108,50 @@ export default function ChatArea({
             <Video className="w-4 h-4" />
             <span className="hidden sm:inline">Video Call</span>
           </button>
+          <button
+            onClick={() => {
+              setParticipantPhone(conversation.peerPhone || '');
+              setShowSchedule(true);
+            }}
+            title="Schedule a call"
+            className="flex items-center space-x-1.5 rounded-xl border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 transition-all hover:border-amber-500/40 hover:bg-amber-600/20 hover:text-amber-300"
+          >
+            <CalendarClock className="h-4 w-4" />
+            <span className="hidden sm:inline">Schedule</span>
+          </button>
         </div>
       </div>
+
+      {showSchedule && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
+          <form onSubmit={handleSchedule} className="w-full max-w-sm rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
+            <div className="mb-5 flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold text-white">Schedule a call</h3>
+              </div>
+              <button type="button" onClick={() => setShowSchedule(false)} className="text-slate-400 hover:text-white" title="Close"><X className="h-5 w-5" /></button>
+            </div>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Calling to</label>
+            <input
+              required
+              type="tel"
+              value={participantPhone}
+              onChange={event => setParticipantPhone(event.target.value)}
+              placeholder="Enter participant phone number"
+              className="mb-4 w-full rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-indigo-500"
+            />
+            <label className="mb-1 block text-xs font-medium text-slate-400">Call type</label>
+            <select value={scheduleType} onChange={event => setScheduleType(event.target.value)} className="mb-4 w-full rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-indigo-500">
+              <option value="video">Video call</option>
+              <option value="voice">Voice call</option>
+            </select>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Date and time</label>
+            <input required type="datetime-local" value={scheduledAt} onChange={event => setScheduledAt(event.target.value)} min={new Date(Date.now() + 60000).toISOString().slice(0, 16)} className="mb-4 w-full rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-indigo-500" />
+            {scheduleMessage && <p className="mb-3 text-xs text-emerald-400">{scheduleMessage}</p>}
+            <button type="submit" className="w-full rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-500">Schedule call</button>
+          </form>
+        </div>
+      )}
 
       {/* Messages Feed */}
       <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-3">
